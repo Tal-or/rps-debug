@@ -14,3 +14,6 @@ oslat-image-build:
 oslat-image-push:
 	docker push $(REGISTRY)/$(IMG):$(TAG)
 
+build:
+	mkdir -p _out || :
+	go build -mod=vendor -o _out/oslat-runner oslat-runner/main.go
