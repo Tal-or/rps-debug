@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/Tal-or/rps-debug/pkg/netcat/affinityoption"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"k8s.io/klog"
@@ -49,7 +52,7 @@ func main() {
 	if err := os.Setenv(mainThreadCPUEnv, mainThreadCPUSet.String()); err != nil {
 		klog.Fatalf("failed to set %s env variable", mainThreadCPUEnv)
 	}
-	klog.Infof("set %s environment variable to %d", mainThreadCPUEnv, mainThreadCPUSet.String())
+	klog.Infof("set %s environment variable to %s", mainThreadCPUEnv, mainThreadCPUSet.String())
 
 	affinity := affinityoption.Parse(*ncAffinity)
 	if affinity != affinityoption.None {
@@ -77,18 +80,23 @@ func main() {
 			klog.Errorf("command finished with error: %v", err)
 		}
 
-		unixMainThreadCPUs := unix.CPUSet{}
+		ncCPUAffinity := unix.CPUSet{}
 		if affinity == affinityoption.Management {
-			unixMainThreadCPUs.Set(mainThreadCPUs)
+			ncCPUAffinity.Set(mainThreadCPUs)
 		} else {
-			unixMainThreadCPUs.Set(cpusForLatencyTest.ToSlice()[0])
+			ncCPUAffinity.Set(cpusForLatencyTest.ToSlice()[0])
 		}
 
-		err = unix.SchedSetaffinity(cmd.Process.Pid, &unixMainThreadCPUs)
+		err = unix.SchedSetaffinity(cmd.Process.Pid, &ncCPUAffinity)
 		if err != nil {
 			klog.Fatalf("failed to set affinity; error %v", err)
 		}
-		klog.Infof("command %s affinity is: %v", cmd.String(), unixMainThreadCPUs)
+
+		affinitySet, err := unixToCPUSet(ncCPUAffinity)
+		if err != nil {
+			klog.Fatalf("err: %v", err)
+		}
+		klog.Infof("command %s affinity is: %v", cmd.String(), affinitySet.String())
 	}
 
 	err = node.PrintInformation()
@@ -116,4 +124,24 @@ func main() {
 
 	klog.Infof("succeeded to run the oslat command: %s", out)
 	klog.Flush()
+}
+
+func unixToCPUSet(unixSet unix.CPUSet) (cpuset.CPUSet, error) {
+	cmd := exec.Command("/bin/sh", "-c", "grep processor /proc/cpuinfo | wc -l")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to run command, out: %s; err: %v", out, err)
+	}
+	cpuCount, err := strconv.Atoi(strings.Trim(string(out), "\n"))
+	if err != nil {
+		return cpuset.CPUSet{}, err
+	}
+
+	var cpus []int
+	for i := 0; i < cpuCount; i++ {
+		if unixSet.IsSet(i) {
+			cpus = append(cpus, i)
+		}
+	}
+	return cpuset.NewCPUSet(cpus...), nil
 }

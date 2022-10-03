@@ -15,6 +15,9 @@ spec:
     - name: oslat
       imagePullPolicy: Always
       image: quay.io/titzhak/rps-debug:latest
+#      command:
+#        - /bin/bash
+#      args: ["-c", "while true; do sleep 100; done"]
       command:
         - "/usr/bin/oslat-runner"
       args:
