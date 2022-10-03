@@ -1,18 +1,15 @@
 # build latency-test's runner binaries
-FROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder-latency-test-runners
+FROM golang:1.18-alpine AS builder-latency-test-runners
 
-ENV PKG_NAME=github.com/openshift-kni/cnf-features-deploy
+ENV PKG_NAME=github.com/Tal-or/rps-debug
 ENV PKG_PATH=/go/src/$PKG_NAME
-ENV TESTER_PATH=$PKG_PATH/cnf-tests/pod-utils
 
 RUN mkdir -p $PKG_PATH
 
 COPY . $PKG_PATH/
-WORKDIR $TESTER_PATH
+WORKDIR $PKG_PATH
+RUN go build -mod=vendor -o /oslat-runner oslat-runner/main.go
 
-RUN go build -mod=vendor -o /oslat-runner oslat-runner/main.go && \
-    go build -mod=vendor -o /cyclictest-runner cyclictest-runner/main.go && \
-    go build -mod=vendor -o /hwlatdetect-runner hwlatdetect-runner/main.go
 
 # Build latency-test binaries
 FROM centos:7 as builder-latency-test-tools
@@ -24,42 +21,19 @@ RUN yum install -y numactl-devel make gcc && \
     curl -O $RT_TESTS_URL/$RT_TESTS_PKG.tar.gz && \
     tar -xvf $RT_TESTS_PKG.tar.gz && \
     cd $RT_TESTS_PKG && \
-    make oslat hwlatdetect cyclictest && \
-    cp oslat /oslat && \
-    cp hwlatdetect /hwlatdetect && \
-    cp cyclictest /cyclictest
+    make oslat && \
+    cp oslat /oslat
 
 FROM centos:7
 
 # python3 is needed for hwlatdetect
-RUN yum install -y lksctp-tools iproute libhugetlbfs-utils libhugetlbfs tmux ethtool ping numactl-libs linuxptp iperf3 python3 nc
-
-RUN mkdir -p /usr/local/etc/cnf
-
-COPY --from=builder-stresser /stresser /usr/bin/stresser
-COPY --from=builder-sctptester /sctptest /usr/bin/sctptest
+RUN curl -L https://forensics.cert.org/cert-forensics-tools-release-el7.rpm -o cert-forensics-tools-release-el7.rpm && \
+    rpm -Uvh cert-forensics-tools-release*rpm && \
+    yum --enablerepo=forensics install -y musl-libc iproute libhugetlbfs-utils libhugetlbfs numactl-libs ethtool ping nc
 
 COPY --from=builder-latency-test-runners /oslat-runner /usr/bin/oslat-runner
 COPY --from=builder-latency-test-tools /oslat /usr/bin/oslat
 
-COPY --from=builder-latency-test-runners /cyclictest-runner /usr/bin/cyclictest-runner
-COPY --from=builder-latency-test-tools /cyclictest /usr/bin/cyclictest
-
-COPY --from=builder-latency-test-runners /hwlatdetect-runner /usr/bin/hwlatdetect-runner
-COPY --from=builder-latency-test-tools /hwlatdetect /usr/bin/hwlatdetect
-
-COPY --from=oc /go/src/github.com/openshift/oc/oc /usr/bin/oc
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/cnftests /usr/bin/cnftests
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/configsuite /usr/bin/configsuite
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/validationsuite /usr/bin/validationsuite
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/entrypoint/test-run.sh /usr/bin/test-run.sh
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/mirror /usr/bin/mirror
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/mirror/images.json /usr/local/etc/cnf
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/cnftests-sha.txt /usr/local/etc/cnf
-COPY tools/oot-driver/ /usr/src/oot-driver/
-COPY tools/numaresources/pause /pause
-COPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/numacell /bin/numacell
-
 ENV SUITES_PATH=/usr/bin/
 
-CMD ["/usr/bin/test-run.sh"]
+CMD ["/usr/bin/oslat-runner"]
