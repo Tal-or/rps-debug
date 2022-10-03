@@ -1,17 +1,24 @@
-package oslat_runner
+package main
 
 import (
+	"context"
 	"flag"
+	"os"
 	"os/exec"
 	"time"
 
 	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpuset"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/openshift-kni/cnf-features-deploy/cnf-tests/pod-utils/pkg/node"
 )
 
-const oslatBinary = "/usr/bin/oslat"
+const (
+	oslatBinary      = "/usr/bin/oslat"
+	mainThreadCPUEnv = "MAIN_THREAD_CPU"
+)
 
 func main() {
 	klog.InitFlags(nil)
@@ -38,6 +45,42 @@ func main() {
 	}
 	cpusForLatencyTest := selfCPUs.Difference(cpuset.NewCPUSet(siblings...))
 	mainThreadCPUSet := cpuset.NewCPUSet(mainThreadCPUs)
+	if err := os.Setenv(mainThreadCPUEnv, mainThreadCPUSet.String()); err != nil {
+		klog.Fatalf("failed to set %s env variable", mainThreadCPUEnv)
+	}
+	klog.Infof("set %s environment variable to %d", mainThreadCPUEnv, mainThreadCPUSet.String())
+
+	port, ok := os.LookupEnv("NETCAT_PORT")
+	if !ok {
+		port = "12345"
+	}
+	klog.Infof("netcat port: %q", port)
+
+	ncCmd := []string{
+		"--listen",
+		"--keep-open",
+		"-p",
+		port,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "nc", ncCmd...)
+	klog.Infof("running %s", cmd.String())
+	cmd.Stdout = os.Stdout
+	err = cmd.Start()
+	if err != nil {
+		klog.Errorf("command finished with error: %v", err)
+	}
+
+	unixMainThreadCPUs := unix.CPUSet{}
+	unixMainThreadCPUs.Set(mainThreadCPUs)
+	err = unix.SchedSetaffinity(cmd.Process.Pid, &unixMainThreadCPUs)
+	if err != nil {
+		klog.Fatalf("failed to set affinity; error %v", err)
+	}
+	klog.Infof("command %s affinity is: %v", cmd.String(), unixMainThreadCPUs)
 
 	err = node.PrintInformation()
 	if err != nil {
@@ -45,6 +88,7 @@ func main() {
 	}
 
 	if *oslatStartDelay > 0 {
+		klog.Infof("waiting %d seconds before start", *oslatStartDelay)
 		time.Sleep(time.Duration(*oslatStartDelay) * time.Second)
 	}
 
@@ -61,6 +105,6 @@ func main() {
 		klog.Fatalf("failed to run oslat command; out: %s; err: %v", out, err)
 	}
 
-	klog.Infof("Succeeded to run the oslat command: %s", out)
+	klog.Infof("succeeded to run the oslat command: %s", out)
 	klog.Flush()
 }
