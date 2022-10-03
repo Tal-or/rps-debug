@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"github.com/Tal-or/rps-debug/pkg/netcat/affinityoption"
 	"os"
 	"os/exec"
 	"time"
@@ -26,7 +27,7 @@ func main() {
 	var oslatStartDelay = flag.Int("oslat-start-delay", 0, "Delay in second before running the oslat binary, can be useful to be sure that the CPU manager excluded the pinned CPUs from the default CPU pool")
 	var rtPriority = flag.String("rt-priority", "1", "Specify the SCHED_FIFO priority (1-99)")
 	var runtime = flag.String("runtime", "10m", "Specify test duration, e.g., 60, 20m, 2H")
-
+	var ncAffinity = flag.String("nc-affinity", "none", "Specify nc process's core affinity. Options: none, management, measurement")
 	flag.Parse()
 
 	selfCPUs, err := node.GetSelfCPUs()
@@ -50,37 +51,45 @@ func main() {
 	}
 	klog.Infof("set %s environment variable to %d", mainThreadCPUEnv, mainThreadCPUSet.String())
 
-	port, ok := os.LookupEnv("NETCAT_PORT")
-	if !ok {
-		port = "12345"
-	}
-	klog.Infof("netcat port: %q", port)
+	affinity := affinityoption.Parse(*ncAffinity)
+	if affinity != affinityoption.None {
+		port, ok := os.LookupEnv("NETCAT_PORT")
+		if !ok {
+			port = "12345"
+		}
+		klog.Infof("netcat port: %q", port)
 
-	ncCmd := []string{
-		"--listen",
-		"--keep-open",
-		"-p",
-		port,
-	}
+		ncCmd := []string{
+			"--listen",
+			"--keep-open",
+			"-p",
+			port,
+		}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	cmd := exec.CommandContext(ctx, "nc", ncCmd...)
-	klog.Infof("running %s", cmd.String())
-	cmd.Stdout = os.Stdout
-	err = cmd.Start()
-	if err != nil {
-		klog.Errorf("command finished with error: %v", err)
-	}
+		cmd := exec.CommandContext(ctx, "nc", ncCmd...)
+		klog.Infof("running %s", cmd.String())
+		cmd.Stdout = os.Stdout
+		err = cmd.Start()
+		if err != nil {
+			klog.Errorf("command finished with error: %v", err)
+		}
 
-	unixMainThreadCPUs := unix.CPUSet{}
-	unixMainThreadCPUs.Set(mainThreadCPUs)
-	err = unix.SchedSetaffinity(cmd.Process.Pid, &unixMainThreadCPUs)
-	if err != nil {
-		klog.Fatalf("failed to set affinity; error %v", err)
+		unixMainThreadCPUs := unix.CPUSet{}
+		if affinity == affinityoption.Management {
+			unixMainThreadCPUs.Set(mainThreadCPUs)
+		} else {
+			unixMainThreadCPUs.Set(cpusForLatencyTest.ToSlice()[0])
+		}
+
+		err = unix.SchedSetaffinity(cmd.Process.Pid, &unixMainThreadCPUs)
+		if err != nil {
+			klog.Fatalf("failed to set affinity; error %v", err)
+		}
+		klog.Infof("command %s affinity is: %v", cmd.String(), unixMainThreadCPUs)
 	}
-	klog.Infof("command %s affinity is: %v", cmd.String(), unixMainThreadCPUs)
 
 	err = node.PrintInformation()
 	if err != nil {

@@ -20,6 +20,7 @@ spec:
       args:
         - "--oslat-start-delay=30"
         - "--runtime=3m"
+        - "--nc-affinity=management"
       ports:
         - containerPort: 12345
       resources:
