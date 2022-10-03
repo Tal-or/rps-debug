@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oslat-rps-debug
+  labels:
+    run: oslat-rps-debug
+  annotations:
+    irq-load-balancing.crio.io: "disable"
+    cpu-load-balancing.crio.io: "disable"
+    cpu-quota.crio.io: "disable"
+spec:
+  runtimeClassName: performance-performance
+  restartPolicy: Never
+  containers:
+    - name: oslat
+      imagePullPolicy: Always
+      image: quay.io/titzhak/rps-debug:latest
+      command:
+        - "/usr/bin/oslat-runner"
+      args:
+        - "--oslat-start-delay=30"
+        - "--runtime=3m"
+      ports:
+        - containerPort: 12345
+      resources:
+          limits:
+            cpu: "16"
+            memory: "2Gi"
+      volumeMounts:
+        - mountPath: /dev/cpu_dma_latency
+          name: cstate
+      securityContext:
+        privileged: true
+      env:
+        - name: NETCAT_PORT
+          value: "12345"
+  volumes:
+    - name: cstate
+      hostPath:
+        path: /dev/cpu_dma_latency
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oslat-rps-debug
+  labels:
+    run: oslat-rps-debug
+spec:
+  type: NodePort
+  ports:
+    - port: 12345
+      protocol: TCP
+      nodePort: 30263
+  selector:
+    run: oslat-rps-debug
