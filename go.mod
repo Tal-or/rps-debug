@@ -4,14 +4,13 @@ go 1.18
 
 require (
 	github.com/openshift-kni/cnf-features-deploy v0.0.0-20220928145739-5314ce12b1c7
+	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
 	k8s.io/klog v1.0.0
 	k8s.io/kubernetes v1.25.2
 )
 
 require (
 	github.com/go-logr/logr v1.2.3 // indirect
-	github.com/golang/glog v1.0.0 // indirect
-	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f // indirect
 	k8s.io/klog/v2 v2.80.1 // indirect
 )
 
